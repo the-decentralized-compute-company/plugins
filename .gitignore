@@ -1,0 +1,18 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Local plugin packaging output
+*.tar.gz
+*.zip
+plugin-manifest.json
+
+# Local plugin stores created while testing installs
+plugin-store/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

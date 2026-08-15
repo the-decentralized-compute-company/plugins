@@ -1,0 +1,17 @@
+[package]
+name = "notes-console"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tdcc-plugin = "0.72.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Standalone crate: this example is not a member of any surrounding workspace.
+[workspace]
