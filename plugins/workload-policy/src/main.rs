@@ -14,8 +14,11 @@
 //! * `clock`     — the one place that reads the wall clock
 //! * `observe`   — the record that makes dry-run useful
 //! * `state`     — loading, reloading, and the shapes the tools return
-//! * `manifest`  — what the host projects: four operations, MCP and HTTP
+//! * `admit`     — the host admission hook: the decision the node acts on
+//! * `manifest`  — what the host projects: the hook, plus four operations on
+//!   MCP and HTTP
 
+mod admit;
 mod cli;
 mod clock;
 mod evaluate;

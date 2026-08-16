@@ -1,12 +1,16 @@
 //! Everything `workload-policy` contributes to the host, in one declaration.
 //!
-//! Four operations, each projected twice: once as an MCP tool for an agent or
-//! the mesh MCP endpoint, and once as an HTTP route for a gateway or a script.
-//! Both projections run the same function, so they cannot drift.
+//! The `admission` hook is the one that matters: the host calls it before it
+//! schedules any inbound work and acts on the answer. The four operations
+//! beside it are for humans and gateways — each projected twice, once as an MCP
+//! tool for an agent or the mesh MCP endpoint, and once as an HTTP route for a
+//! gateway or a script. Every projection runs the same evaluator, so what the
+//! node does and what `check` reports cannot drift.
 //!
 //! Macro field order is fixed: `metadata`, `startup_policy`, `provides`,
-//! `config`, `web_ui`, `mesh`, `events`, `mcp`, `http`, `inference`, then
-//! lifecycle hooks. Omitting a field is fine, reordering is not.
+//! `config`, `web_ui`, `mesh`, `events`, `mcp`, `http`, `inference`,
+//! `admission`, then lifecycle hooks. Omitting a field is fine, reordering is
+//! not.
 //!
 //! No `mesh` and no `events` are declared. Delivery is allowlist-based, so this
 //! plugin receives no channel messages and no mesh events — it does not need
@@ -15,9 +19,11 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tdcc_plugin::{
-    PluginError, PluginMetadata, SimplePlugin, capability, http, mcp, plugin, plugin_server_info,
+    PluginError, PluginMetadata, SimplePlugin, admission, capability, http, mcp, plugin,
+    plugin_server_info,
 };
 
+use crate::admit::admit;
 use crate::evaluate::Request;
 use crate::state::{
     CheckResponse, PolicyState, PolicyView, ReloadFailure, ReloadResponse, ReportResponse,
@@ -135,18 +141,20 @@ pub fn workload_policy_plugin(state: PolicyState) -> SimplePlugin {
     plugin! {
         metadata: PluginMetadata::new(
             "workload-policy",
-            "0.1.0",
+            "0.2.0",
             plugin_server_info(
                 "workload-policy",
-                "0.1.0",
+                "0.2.0",
                 "Workload policy",
                 "Node-side admission policy: what this machine will and will not accept",
                 None::<String>,
             ),
         ),
 
-        // A named contract, so an admission caller can depend on "something
-        // that decides" rather than on this plugin's id.
+        // A named contract, so a caller can depend on "something that decides"
+        // rather than on this plugin's id. The host's own admission capability
+        // is declared by the `admission` section below; this one is for anything
+        // that wants this plugin's richer `check`/`report`/`policy` surface.
         provides: [capability("workload-policy.v1")],
 
         mcp: [
@@ -278,6 +286,31 @@ pub fn workload_policy_plugin(state: PolicyState) -> SimplePlugin {
                 }),
         ],
 
+        // The enforcement point. The host invokes this before it schedules any
+        // inbound work and acts on the answer — a `deny` stops the request and
+        // becomes a structured error naming this plugin, the outcome code, and
+        // the operator's own reason.
+        //
+        // It must stay fast. The host applies a hard deadline (2s by default)
+        // and treats a hook that misses it as unavailable, which fails the node
+        // closed. Everything below this call is a mutex and pure evaluation; no
+        // file is read and no lock is held across an await.
+        admission: [
+            admission::hook()
+                .description(
+                    "Refuse inbound work this node's local policy does not accept: wrong model, \
+                     wrong peer, wrong time of day, too much context, over a rate limit. Never \
+                     reads prompt content.",
+                )
+                .handle({
+                    let state = state.clone();
+                    move |request: admission::AdmissionRequest, _context| {
+                        let state = state.clone();
+                        Box::pin(async move { Ok(admit(&state, request)) })
+                    }
+                }),
+        ],
+
         // Health must stay independent of anything slow. This reads one mutex
         // and formats a line.
         health: {
@@ -336,7 +369,39 @@ mod tests {
                 "missing HTTP route '{path}'"
             );
         }
-        assert_eq!(manifest.capabilities, vec!["workload-policy.v1"]);
+        assert_eq!(
+            manifest.capabilities,
+            vec![
+                "workload-policy.v1",
+                admission::ADMISSION_CAPABILITY.to_string().as_str()
+            ]
+        );
+    }
+
+    /// This is the declaration that makes the plugin enforcing. Without both
+    /// halves the host either never consults it (no capability) or cannot call
+    /// it (no operation), and in the second case fails the node closed.
+    #[test]
+    fn the_manifest_declares_the_admission_hook_the_host_enforces() {
+        let manifest = plugin()
+            .manifest()
+            .expect("declarative plugins have a manifest");
+
+        assert!(
+            manifest
+                .capabilities
+                .iter()
+                .any(|capability| capability == admission::ADMISSION_CAPABILITY),
+            "the host resolves the hook through this capability"
+        );
+        assert!(
+            manifest
+                .operations
+                .iter()
+                .any(|operation| operation.name == admission::ADMISSION_OPERATION),
+            "the host invokes '{}' on whoever declares the capability",
+            admission::ADMISSION_OPERATION
+        );
     }
 
     #[test]

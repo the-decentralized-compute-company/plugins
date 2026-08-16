@@ -1,7 +1,7 @@
 # workload-policy
 
 Lets the person who owns a machine say what it will and will not accept, in a
-file, and answers "should this run here?" for every request that asks.
+file, and refuses the work that does not match — before the node runs any of it.
 
 On a mesh of donated hardware this is not a comfort feature. Someone plugging a
 gaming PC into a shared pool has opinions — only overnight, nothing over 8k
@@ -40,27 +40,55 @@ limit = { requests = 60, per_seconds = 60, per = "peer" }
 
 ## What this is, exactly
 
-This plugin **decides**. It does not intercept.
+This plugin **decides, and the host enforces the decision.**
 
-The host owns request routing and policy enforcement — see the "What The Host
-Owns" list in the TDCC plugin architecture — and there is no hook in the plugin
-protocol today that lets a plugin veto an inference request on its way through.
-Claiming otherwise here would be a lie with a bad failure mode: an operator
-would write rules, believe they were being applied, and donate a machine on that
-belief.
+It declares the host's admission capability, `admission-control.v1`. The host
+calls it before it schedules any inbound inference request — from a local client
+on `127.0.0.1:9337` and from mesh peers, whose requests are tunnelled to that
+same listener — and acts on the answer. A `deny` stops the request there and
+returns a `403` (or a `429` when a rate limit asked the caller to come back
+later) carrying this plugin's outcome code and the operator's own sentence.
+Nothing is scheduled, nothing is routed, nothing runs.
 
-So what ships is the decision, in three shapes:
+*Inference request* is doing work in that sentence. One inbound path is not one:
+if this node hosts a skippy pipeline stage for a peer's run, those activations
+arrive on a separate QUIC ALPN and never reach this hook. The host documents
+that gap under "What Is Not Covered" in `docs/plugins/admission.md`. Rules here
+govern the requests this node is asked to answer, which is most of what a
+donated machine does, but not the whole of it.
 
-| Shape | Who calls it |
-| --- | --- |
-| Capability `workload-policy.v1` | Core, if and when it resolves admission through a named capability |
-| MCP tool `workload-policy.check` | An agent, an operator, or the mesh MCP endpoint |
-| `POST /api/plugins/workload-policy/http/check` | A gateway in front of `127.0.0.1:9337`, or a script |
+> **This changed in 0.2.0.** Before it, the host had no hook to consume a
+> plugin's decision, and this README said so: the plugin decided and something
+> in front of the node had to honour the answer. `tdcc` now has a general
+> admission hook, documented in `docs/plugins/admission.md`, and this plugin is
+> its first consumer. If you deployed 0.1.0 behind a gateway that calls `check`,
+> that still works — `check` is unchanged — but it is no longer the only way to
+> get enforcement.
 
-Until the host consumes the capability itself, enforcement means putting
-something in front of the node's OpenAI-compatible port that calls `check` and
-honours the answer. That is a real deployment — it is also honestly a wrapper,
-and this README will not pretend it is a kernel module.
+Four ways in, all running the same evaluator:
+
+| Shape | Who calls it | Enforcing? |
+| --- | --- | --- |
+| Capability `admission-control.v1` → operation `admit` | The host, before it schedules anything | **Yes** |
+| Capability `workload-policy.v1` | Anything that wants the richer `check`/`report`/`policy` surface | No — advisory |
+| MCP tool `workload-policy.check` | An agent, an operator, or the mesh MCP endpoint | No — advisory |
+| `POST /api/plugins/workload-policy/http/check` | A gateway in front of the node, or a script | No — advisory |
+
+`check` remains the way to ask "what would this node do with a request like
+*that*" without submitting one, and it is the only one that takes `explain`.
+
+### What the host does when this plugin cannot answer
+
+The host owns that decision, not this plugin, and it is worth knowing before you
+install anything: a **declared** hook that is slow, crashed, or disabled fails
+**closed** by default. Set `TDCC_ADMISSION_ON_UNAVAILABLE=allow` to keep serving
+instead; it logs a warning on every request it lets through. The host's deadline
+for one call is 2 seconds (`TDCC_ADMISSION_TIMEOUT_MS`), and it is hard — a
+wedged plugin cannot hang the node.
+
+That is separate from what *this plugin* does about a policy file it cannot
+read, described under [When things go wrong](#when-things-go-wrong). Both fail
+closed, for the same reason, at different layers.
 
 Everything else in here — the policy language, the precedence rules, the
 dry-run ledger, the failure behaviour — is the part that is hard to get right,
@@ -80,11 +108,39 @@ reasons its operator cannot reproduce, while still passing the things someone
 actually meant to sneak through. A rule about a token count is either right or
 wrong, and you can tell which by reading it.
 
-The boundary is enforced in the type system, not just in the docs: the `check`
-arguments set `deny_unknown_fields`, so a caller that sends `prompt` or
-`messages` gets an invalid-arguments error rather than having it quietly
-ignored. There is nowhere for content to land, which also means there is nothing
-about content in the decision log.
+The boundary is enforced in the type system, not just in the docs: both the
+`check` arguments and the host's `AdmissionRequest` set `deny_unknown_fields`, so
+a caller that sends `prompt` or `messages` gets an invalid-arguments error rather
+than having it quietly ignored. There is nowhere for content to land, which also
+means there is nothing about content in the decision log.
+
+**It does not modify requests.** A hook answers allow or deny. It cannot rewrite
+the model, trim the context, or send the work somewhere else.
+
+### What the host can and cannot tell it
+
+At the OpenAI ingress two descriptor fields come with caveats, and a rule that
+depends on them should be written knowing which:
+
+- **`context_tokens` is an estimate.** There is no tokenizer in front of the
+  ingress, so the host derives the figure from the request body size at four
+  bytes per token and marks it `context_tokens_estimated`. A
+  `when.context_tokens_over = 8192` rule is still your line; it is drawn against
+  an approximation. Leave headroom if the exact boundary matters.
+- **`peer` and `owner` arrive empty.** Mesh traffic reaches the ingress through a
+  byte-level tunnel that terminates on loopback, and the submitting peer's
+  identity is not carried across it. The host leaves the fields unset rather than
+  guessing.
+
+The second one has teeth: a policy containing `when.peers` or `when.owners`
+declares those as required request fields, and a request that omits a required
+field is refused with `policy.incomplete_request` before any rule runs. **A peer
+allow-list therefore refuses everything at the OpenAI ingress today.** That is
+the correct direction to fail — the alternative is a rule that quietly matches
+nothing — but it means peer and owner rules are not usable there yet. Use model,
+kind, size, and time conditions until the host can attribute a peer, and use
+`check` if you need to evaluate peer rules from a component that does know the
+identity.
 
 ---
 
@@ -96,8 +152,8 @@ the archive:
 
 ```bash
 cargo build --release
-tdcc plugins install --archive ./target/workload-policy-0.1.0-local.tar.gz \
-  --name workload-policy --version 0.1.0
+tdcc plugins install --archive ./target/workload-policy-0.2.0-local.tar.gz \
+  --name workload-policy --version 0.2.0
 ```
 
 Then in `~/.tdcc/config.toml`:
@@ -267,6 +323,10 @@ response says so explicitly:
 ```
 
 `error` is null because nothing was refused; there is no refusal to hand back.
+The admission hook reads `decision`, and only `decision` — so a dry-run policy
+stays dry-run at the enforcement point too. Wiring this plugin to the host does
+not turn a dry run into an enforcing one; changing `mode` does.
+
 The workflow:
 
 1. Install with no policy file. Everything is served and recorded.
@@ -305,12 +365,24 @@ Validation reports every complaint at once, so a broken file can be fixed in one
 pass. TOML syntax errors are the exception: those come from the parser one at a
 time, with a line number and a caret.
 
+One more layer sits above all of this. If the *plugin process itself* is not
+answering — it crashed, it is disabled, it is wedged — the host applies its own
+unavailable policy, which also fails closed. So there are two independent
+fail-closed switches, and they escape independently:
+
+| Broken thing | Who decides | Escape hatch |
+| --- | --- | --- |
+| The policy file will not load | This plugin | `--on-invalid-policy allow` |
+| This plugin will not answer | The host | `TDCC_ADMISSION_ON_UNAVAILABLE=allow` |
+
 ---
 
 ## Tools and routes
 
-Every operation is projected twice — once as an MCP tool, once as an HTTP route
-— and both run the same function.
+The admission hook is not in this table: it is not a tool, it has no HTTP route,
+and nothing but the host calls it. Everything below is for humans and gateways,
+projected twice — once as an MCP tool, once as an HTTP route — with both running
+the same function.
 
 | MCP tool | HTTP | Does |
 | --- | --- | --- |
@@ -334,6 +406,37 @@ is wrong with it" oracle, since load errors quote the file. The path is fixed at
 startup.
 
 ### Reading a refusal
+
+There are two shapes, because there are two callers.
+
+**Through the host's admission hook**, a refusal is the response to the original
+inference request: a `403` (or `429`, when `retry_after_ms` is set), with a
+`Retry-After` header on the `429`. The body is the OpenAI error envelope every
+client already parses, with the structured detail beside it:
+
+```json
+{
+  "error": {
+    "message": "Local workload policy on this node declined the request: This node caps context at 8192 tokens.",
+    "type": "permission_error",
+    "param": null,
+    "code": "policy.deny_rule"
+  },
+  "admission": {
+    "plugin": "workload-policy",
+    "code": "policy.deny_rule",
+    "message": "Local workload policy on this node declined the request: This node caps context at 8192 tokens.",
+    "rule_id": "context-cap",
+    "unavailable": false
+  }
+}
+```
+
+`"unavailable": true` means something different and important: the hook did not
+answer at all and the node failed closed. That is a breakage to investigate, not
+a rule that fired. See `docs/plugins/admission.md`.
+
+**Through `check`**, the caller is a gateway or a script asking a question, and:
 
 > **A refusal is an HTTP `200` with `"decision": "deny"`.** The status code
 > describes whether the evaluation worked, not what it decided. A gateway that
@@ -403,12 +506,22 @@ These run on other people's hardware, so:
 - **State.** All in memory. Counters and the decision ring reset when the plugin
   process restarts; the policy file is the only durable thing.
 
-Two things worth knowing before you point this at anything important:
+Three things worth knowing before you point this at anything important:
+
+**It is in the request path.** Every inbound request now waits on this plugin
+before the node serves it. The hook does no I/O — it takes one mutex and runs a
+pure evaluation over at most 512 rules — and the host caps one call at 2 seconds
+and treats a miss as a failure. But a policy engine that gets slow makes the
+whole node slow, so keep rule counts sane and do not add anything here that
+blocks.
 
 **It trusts its caller.** `peer` and `owner` are strings the calling component
 supplies. This plugin has no way to verify that the peer that submitted the work
 is the peer named in the descriptor — that is the host's identity layer's job.
-A peer allow list is exactly as trustworthy as whatever fills in that field.
+A peer allow list is exactly as trustworthy as whatever fills in that field. At
+the OpenAI ingress the host supplies neither, which is why peer and owner rules
+refuse everything there; see
+[What the host can and cannot tell it](#what-the-host-can-and-cannot-tell-it).
 
 **Load errors quote your file.** A TOML parse error includes the offending line.
 That is your own configuration, returned over a local API to a local operator,
@@ -486,10 +599,10 @@ mkdir -p target/package/workload-policy
 cp target/release/workload-policy target/package/workload-policy/workload-policy
 cp plugin.toml README.md target/package/workload-policy/
 cp ../../LICENSE target/package/workload-policy/
-tar -C target/package -czf target/workload-policy-0.1.0-local.tar.gz workload-policy
+tar -C target/package -czf target/workload-policy-0.2.0-local.tar.gz workload-policy
 
-tdcc plugins install --archive ./target/workload-policy-0.1.0-local.tar.gz \
-  --name workload-policy --version 0.1.0
+tdcc plugins install --archive ./target/workload-policy-0.2.0-local.tar.gz \
+  --name workload-policy --version 0.2.0
 tdcc plugins info workload-policy
 ```
 
@@ -498,7 +611,7 @@ top-level directory is `workload-policy\`:
 
 ```powershell
 Compress-Archive -Path target\package\workload-policy `
-  -DestinationPath target\workload-policy-0.1.0-local.zip -Force
+  -DestinationPath target\workload-policy-0.2.0-local.zip -Force
 ```
 
 Set `TDCC_PLUGIN_DIR` to an empty directory first if you do not want this
@@ -525,12 +638,22 @@ launch contract.
 cargo test
 ```
 
-80 unit tests, covering the parts that are pure and therefore worth pinning
+87 unit tests, covering the parts that are pure and therefore worth pinning
 down: window parsing and midnight wrap-around, wildcard matching and the
 case-sensitivity split, every validation rejection, conflict precedence, the
 missing-field refusal, token-bucket refill and bucket-cap exhaustion, ledger
 retention and counter caps, argument parsing, and the load/reload state machine
 including "a bad reload never replaces a good policy".
+
+`src/admit.rs` covers the enforcement path specifically: an enforcing deny rule
+refuses, a permitted request is admitted, dry-run stays dry-run at the hook, a
+rule keyed on a field the host cannot supply refuses rather than matching
+nothing, a rate-limited refusal carries `retry_after_ms`, and every descriptor
+field the policy understands survives the crossing.
+
+The host side — the veto being consumed, the deadline, the plugin-absent case —
+is tested in the `tdcc` repository under
+`crates/tdcc-host-runtime/src/network/openai/admission.rs`.
 
 ---
 
@@ -540,6 +663,12 @@ Semantic versioning. Treat these as breaking changes, because they are the names
 other people wrote down: the capability id `workload-policy.v1`, the four MCP
 tool names, the four HTTP paths, the outcome codes, the shape of the `error`
 envelope, and the policy file keys.
+
+The admission surface — the capability `admission-control.v1` and the operation
+`admit` — belongs to the host, not to this plugin. It is defined in
+`docs/plugins/admission.md` and versioned with `tdcc`. Dropping it here would be
+a breaking change to this plugin, because the whole point of installing this is
+that the host consults it.
 
 `version = 1` in the policy file is the document version and is checked on load;
 a future format change bumps it and says so rather than silently reinterpreting
