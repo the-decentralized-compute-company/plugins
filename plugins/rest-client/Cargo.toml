@@ -1,0 +1,45 @@
+[package]
+name = "rest-client"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
+# The operator's endpoint declaration is a TOML document, same as
+# `workload-policy`'s rules. `toml` is already in this repository's dependency
+# set for that reason.
+toml = "0.9"
+
+# rustls with bundled roots rather than the platform TLS stack: people build
+# this plugin on their own machines and a rustls build needs no OpenSSL headers.
+# `reqwest::Url` is re-exported `url::Url`, so there is no separate `url`
+# dependency and no chance of two incompatible `Url` types in the graph.
+#
+# There is deliberately no `base64` dependency: HTTP Basic needs exactly one
+# 20-line encoder, which lives in `src/auth.rs` with its RFC 4648 test vectors.
+reqwest = { version = "0.12", default-features = false, features = [
+    "http2",
+    "rustls-tls",
+] }
+
+# `tdcc-plugin` is NOT published on crates.io under this name — it was renamed
+# from `mesh-llm-plugin` and its repository is private — so `tdcc-plugin = "…"`
+# does not resolve. Point at a local `tdcc-mesh` checkout instead. See
+# README.md > "Building against the SDK" for what to change once it is
+# published.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+[dev-dependencies]
+# A stub HTTP server on loopback stands in for a real API in the call-path
+# tests, so auth headers, status handling, and the size cap are proven against
+# a real socket rather than a mock.
+tokio = { version = "1", features = ["io-util", "net"] }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
