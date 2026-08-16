@@ -1,0 +1,45 @@
+[package]
+name = "docker-inspect"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The plugin speaks HTTP/1.1 to one local Docker endpoint and nothing else, so
+# it reads responses with `httparse` rather than pulling in a client stack.
+# `httparse` has no transitive dependencies, which keeps the audit surface of a
+# binary that reads other people's containers to something a person can read.
+#
+# There is deliberately **no** Docker client crate here. A client library
+# exposes create/exec/start/stop/remove alongside the read calls, and the only
+# thing keeping those out of this binary would then be a code review. Speaking
+# the API directly means the write verbs are absent from the compiled artifact
+# rather than merely unused — see `src/transport.rs`.
+httparse = "1"
+
+# There is deliberately no TLS crate either. This plugin cannot speak `https`,
+# which is why `https://` endpoints are refused at startup by name instead of
+# being half-supported. That refusal is enforced by the dependency graph.
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "time",
+] }
+
+# `tdcc-plugin` is NOT published on crates.io under this name — it was renamed
+# from `mesh-llm-plugin` and its repository is private — so `tdcc-plugin = "…"`
+# does not resolve. Point at a local `tdcc-mesh` checkout instead. See
+# README.md > "Building against the SDK" for what to change once the SDK is
+# published.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
