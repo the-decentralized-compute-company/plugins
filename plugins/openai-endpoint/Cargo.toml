@@ -1,0 +1,38 @@
+[package]
+name = "openai-endpoint"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+url = "2"
+
+# No TLS backend on purpose. The host's external-endpoint proxy only speaks
+# cleartext `http` (it rejects every other scheme before connecting), so an
+# endpoint this plugin could reach over TLS would still never be routable.
+# Building without a TLS feature keeps that limit enforced by the dependency
+# graph instead of by a comment. See README, "Why http only".
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+
+# The SDK is NOT on crates.io under this name: `tdcc-plugin` was renamed from
+# `mesh-llm-plugin` and lives in the (private) tdcc-mesh repository, so
+# `tdcc-plugin = "0.72.1"` does not resolve. This path assumes tdcc-mesh and
+# tdcc-plugins are checked out as siblings. A public consumer replaces this one
+# line with the published dependency once the SDK ships. See README, "Building".
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+[dev-dependencies]
+# The streaming tests stand up a real OpenAI-compatible SSE server on a
+# loopback socket, so the plugin is exercised over the wire rather than against
+# a mock. Only the tests need a listener; the plugin itself never opens one.
+tokio = { version = "1", features = ["io-util", "net"] }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
