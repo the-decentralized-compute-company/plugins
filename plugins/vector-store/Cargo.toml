@@ -1,0 +1,53 @@
+[package]
+name = "vector-store"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+# Only the pieces needed to POST JSON to one configured embeddings endpoint.
+# `rustls-tls` rather than the default native TLS so a release build needs no
+# OpenSSL headers on the contributor machines this plugin is meant to run on.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `net` and `time` are for the embeddings client; `rt-multi-thread` gives
+# `spawn_blocking` a pool, which is where every store read and write runs so a
+# 50k-chunk scan cannot stall the control connection's health checks.
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
+# Deciding "is this endpoint on loopback?" is a security check, so it uses a
+# real URL parser instead of string matching. See `config::endpoint_reach`.
+url = "2"
+
+# `tdcc-plugin` is NOT published to crates.io: the SDK was renamed from
+# `mesh-llm-plugin` and the repository it lives in is private, so
+# `tdcc-plugin = "0.72.1"` does not resolve. This builds against a local
+# checkout of the tdcc-mesh repository placed next to this one:
+#
+#   <parent>/tdcc-plugins/plugins/vector-store/   <- this crate
+#   <parent>/tdcc-mesh/crates/tdcc-plugin/        <- the SDK
+#
+# Once the SDK is published, drop the `path` key and keep the `version` — no
+# source file in this crate depends on the dependency being local. See
+# "Building against the SDK" in README.md.
+tdcc-plugin = { version = "0.72.1", path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+[dev-dependencies]
+# `src/end_to_end.rs` stands up a stub embeddings server on loopback so the
+# whole upsert -> persist -> reload -> query path is exercised for real,
+# against a socket, without needing an embedding model.
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+] }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
