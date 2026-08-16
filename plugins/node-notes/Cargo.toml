@@ -1,0 +1,35 @@
+[package]
+name = "node-notes"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `time` is needed for the periodic roll-off task; `macros` and `rt-multi-thread`
+# for the runtime itself. No HTTP client and no TLS stack: this plugin makes no
+# outbound network requests of its own — everything peer-to-peer goes through
+# the host's mesh channel.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+# The SDK is a path dependency, not a registry version.
+#
+# `tdcc-plugin` is not published to crates.io under that name — it was renamed
+# from `mesh-llm-plugin` and the `tdcc-mesh` repository is private, so
+# `tdcc-plugin = "0.72.1"` does not resolve. This path points at a sibling
+# checkout of `tdcc-mesh`; adjust it if yours lives somewhere else. Once the SDK
+# is published, replace the whole line with the registry form and pin the exact
+# version matching the `tdcc` release you target:
+#
+#     tdcc-plugin = "0.72.1"
+#
+# The initialize handshake requires an exact protocol-version match, so host and
+# plugin must be built against compatible SDKs either way.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
