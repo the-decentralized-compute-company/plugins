@@ -1,0 +1,26 @@
+[package]
+name = "workload-policy"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+# `clock` is the only chrono feature this plugin needs: it supplies `Local::now`
+# and `Utc::now`, which is how a time-of-day rule learns what "22:00" means on
+# this machine, DST included. Everything downstream of that single call is pure.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The SDK is not on crates.io under this name (it was renamed from
+# `mesh-llm-plugin` and lives in a private repository), so `tdcc-plugin = "0.72.1"`
+# does not resolve. This path assumes tdcc-mesh and tdcc-plugins are checked out
+# as siblings. See "Building against the SDK" in README.md for the alternatives.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+toml = "0.9"
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
