@@ -1,0 +1,54 @@
+[package]
+name = "capability-attest"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+# Same pin as `tdcc-identity`. The two crates exchange `VerifyingKey` values, so
+# a second copy of ed25519-dalek in the graph would be a type error, not a
+# silently working duplicate.
+ed25519-dalek = "=3.0.0-rc.0"
+hex = "0.4"
+# No TLS features: this plugin only ever speaks plain HTTP to a loopback
+# address (see `config::ensure_measurable_endpoint`), so linking a TLS stack
+# would add attack surface it cannot use.
+reqwest = { version = "0.12", default-features = false }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "time"] }
+url = "2"
+
+# ── The two TDCC crates ────────────────────────────────────────────────────
+#
+# `tdcc-plugin` and `tdcc-identity` are NOT on crates.io under these names: the
+# SDK was renamed from `mesh-llm-plugin` and the repository is private, so
+# `tdcc-plugin = "0.72.1"` does not resolve. Until the SDK is published these
+# have to be path dependencies into a local `tdcc-mesh` checkout.
+#
+# The paths below assume `tdcc-mesh` and `tdcc-plugins` are siblings:
+#
+#     token/
+#       tdcc-mesh/
+#       tdcc-plugins/plugins/capability-attest/   <- you are here
+#
+# If your checkout is elsewhere, either edit these two paths or add a
+# `[patch]` section pointing at your own copy. Once `tdcc-plugin` and
+# `tdcc-identity` are published, replace both with plain version requirements
+# matching the `tdcc` release you target (`tdcc-plugin = "0.72.1"` for this
+# one) — the initialize handshake requires an exact protocol-version match.
+tdcc-identity = { path = "../../../tdcc-mesh/crates/tdcc-identity", features = ["host-io"] }
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+[dev-dependencies]
+tempfile = "3"
+# The end-to-end tests in `bench` stand up a real socket and speak HTTP to it,
+# so the test build needs the two tokio features the plugin itself does not.
+tokio = { version = "1", features = ["io-util", "net"] }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
