@@ -1,0 +1,61 @@
+# Example Prometheus scrape configuration for the TDCC prometheus-exporter
+# plugin. Drop the `scrape_configs` entry into your existing prometheus.yml.
+#
+# The scrape target lives on the node's operator console port, under the
+# host-mounted plugin route:
+#
+#   http://127.0.0.1:3131/api/plugins/prometheus-exporter/http/metrics
+#
+# IMPORTANT — this endpoint is loopback-only. `tdcc` treats every
+# `/api/plugins/...` route as trusted-local: the request must come from a
+# loopback address AND carry a loopback `Host` header. A Prometheus running on
+# another machine cannot scrape it, by design. Run a Prometheus agent (or a
+# full Prometheus) on each node, or put an authenticated reverse proxy in front
+# of it. See README > "Scraping from another machine".
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # ---------------------------------------------------------------------
+  # Single node, Prometheus running on that same machine.
+  # ---------------------------------------------------------------------
+  - job_name: tdcc
+    metrics_path: /api/plugins/prometheus-exporter/http/metrics
+    # The exporter reads node state fresh on every scrape, so scraping it more
+    # often than the node's own state changes just costs both sides work.
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["127.0.0.1:3131"]
+        labels:
+          # `instance` is set from the target by default. Add anything that
+          # identifies the machine to *you*; the node's own identity already
+          # arrives as labels on tdcc_node_info.
+          site: home-lab
+
+    # The exposition carries node_id, version, hostname and mesh_id on
+    # `tdcc_node_info`. Copy node_id onto every series from this target so a
+    # dashboard can group by it without a join. Comment this out if you would
+    # rather keep the join and the lower cardinality.
+    metric_relabel_configs: []
+
+  # ---------------------------------------------------------------------
+  # Several nodes, each running its own Prometheus agent that remote-writes
+  # to a central store. This is the shape that actually works across a mesh,
+  # because each agent scrapes its own loopback.
+  # ---------------------------------------------------------------------
+  # - job_name: tdcc
+  #   metrics_path: /api/plugins/prometheus-exporter/http/metrics
+  #   static_configs:
+  #     - targets: ["127.0.0.1:3131"]
+  #   relabel_configs:
+  #     - target_label: node
+  #       replacement: "${HOSTNAME}"
+
+# ---------------------------------------------------------------------------
+# Alerting rules live in alerts.yml next to this file. Reference them with:
+#
+# rule_files:
+#   - alerts.yml
+# ---------------------------------------------------------------------------

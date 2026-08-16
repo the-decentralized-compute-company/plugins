@@ -1,0 +1,36 @@
+[package]
+name = "prometheus-exporter"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The exporter speaks HTTP/1.1 to one loopback address and nothing else, so it
+# reads responses with `httparse` instead of pulling in a full client stack.
+# `httparse` has no transitive dependencies, which keeps the audit surface of a
+# binary that runs on other people's machines to something a person can read.
+httparse = "1"
+
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "time",
+] }
+
+# `tdcc-plugin` is NOT published on crates.io under this name — it was renamed
+# from `mesh-llm-plugin` and its repository is private — so `tdcc-plugin = "…"`
+# does not resolve. Point at a local `tdcc-mesh` checkout instead. See
+# README.md > "Building against the SDK" for what to change once the SDK ships
+# to a registry.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]

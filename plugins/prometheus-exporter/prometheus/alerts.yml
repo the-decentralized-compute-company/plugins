@@ -1,0 +1,149 @@
+# Alerting rules for the TDCC prometheus-exporter plugin.
+#
+# Every rule below is written against a metric this exporter actually emits.
+# Thresholds are starting points, not recommendations: what counts as slow or
+# busy depends entirely on the hardware contributed to your mesh, so tune them
+# against a week of your own data before paging anyone.
+
+groups:
+  - name: tdcc-node
+    rules:
+      # `up` is synthesised by Prometheus for the scrape itself; `tdcc_up` is
+      # the exporter saying whether it could read node state. They fail
+      # independently, and the difference matters: the first means the node
+      # process is gone, the second means it is running but not answering.
+      - alert: TdccExporterUnreachable
+        expr: up{job="tdcc"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus cannot scrape the TDCC exporter on {{ $labels.instance }}"
+          description: >-
+            The tdcc process may be stopped, or the prometheus-exporter plugin
+            may be disabled. Check `tdcc plugins list`.
+
+      - alert: TdccNodeApiUnreadable
+        expr: tdcc_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TDCC exporter on {{ $labels.instance }} cannot read node state"
+          description: >-
+            The plugin is running but `GET /api/status` is failing. Curl the
+            metrics endpoint: the reason is on a comment line at the top of the
+            response, and `prometheus-exporter.check` returns it as an error.
+
+      - alert: TdccRuntimeNotReady
+        expr: tdcc_node_is_host == 1 and tdcc_node_runtime_ready == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TDCC node {{ $labels.instance }} is a host but its runtime is not ready"
+
+      - alert: TdccRequestFailureRateHigh
+        expr: |
+          sum(rate(tdcc_requests_total{outcome="failure"}[10m]))
+            /
+          clamp_min(sum(rate(tdcc_requests_total[10m])), 0.001)
+            > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of requests fronted by {{ $labels.instance }} are failing"
+
+      # Mean attempt latency, reconstructed from the summary's _sum and _count.
+      # The node does not expose a latency distribution, so this cannot alert on
+      # p99 — see README > "Latency" for what that would take.
+      - alert: TdccAttemptLatencyHigh
+        expr: |
+          rate(tdcc_request_attempt_duration_seconds_sum[10m])
+            /
+          clamp_min(rate(tdcc_request_attempt_duration_seconds_count[10m]), 0.001)
+            > 30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mean routing-attempt latency on {{ $labels.instance }} is above 30s"
+
+      - alert: TdccQueueWaitHigh
+        expr: |
+          rate(tdcc_request_queue_wait_seconds_sum[10m])
+            /
+          clamp_min(rate(tdcc_request_queue_wait_seconds_count[10m]), 0.001)
+            > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests on {{ $labels.instance }} are queueing for more than 5s on average"
+          description: >-
+            Queue wait rising while attempt latency stays flat means the node is
+            saturated rather than slow. Compare with tdcc_requests_in_flight.
+
+      - alert: TdccNoPeers
+        expr: sum(tdcc_peers) == 0
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "TDCC node {{ $labels.instance }} sees no mesh peers"
+
+      - alert: TdccPeerLinkSlow
+        expr: tdcc_peer_rtt_seconds > 0.5
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Round-trip time to peer {{ $labels.peer }} is above 500ms"
+
+      # A latency reading nobody has refreshed is not a healthy link, it is an
+      # unmeasured one. Alert on the staleness, not on the value.
+      - alert: TdccPeerLatencyStale
+        expr: tdcc_peer_latency_age_seconds > 900
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Latency to peer {{ $labels.peer }} has not been refreshed for 15 minutes"
+
+  - name: tdcc-exporter
+    rules:
+      - alert: TdccExporterCollectionsFailing
+        expr: rate(tdcc_exporter_collections_total{outcome="error"}[10m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TDCC exporter on {{ $labels.instance }} is failing to collect node state"
+
+      - alert: TdccExporterCollectSlow
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(tdcc_exporter_collect_duration_seconds_bucket[10m]))
+          ) > 1
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "p99 node-state collection on {{ $labels.instance }} is above 1s"
+          description: >-
+            The exporter reads a loopback endpoint, so this should sit in the
+            millisecond buckets. A slow read means the node's API loop is
+            blocked, which usually shows up in user-facing latency too.
+
+      - alert: TdccExporterPeersTruncated
+        expr: tdcc_peers_truncated > 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Per-peer series are being dropped on {{ $labels.instance }}"
+          description: >-
+            The mesh has more peers than --max-peer-series allows. Raise the cap
+            in [[plugin]].args, or accept the aggregates and silence this.
