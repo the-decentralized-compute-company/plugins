@@ -1,0 +1,51 @@
+[package]
+name = "scheduled-prompts"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+# `clock` is the only chrono feature this plugin needs beyond `std`: it supplies
+# `Local::now` and `Local.from_local_datetime`, which is how "0 3 * * *" learns
+# what 03:00 means on this machine, DST transitions included. Everything
+# downstream of those two calls is pure and takes a `NaiveDateTime`.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Two POST shapes: one to the node's OpenAI-compatible endpoint on loopback, one
+# to an operator-configured webhook. `rustls-tls` rather than the platform TLS
+# stack so a release build needs no OpenSSL headers on a contributor's machine.
+# `reqwest::Url` is re-exported `url::Url`, so there is no separate `url`
+# dependency and no chance of two incompatible `Url` types in the graph.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+# The jobs file is TOML because it is the format the operator already edits for
+# `~/.tdcc/config.toml`, and because `deny_unknown_fields` on a TOML document
+# gives a typo a line number instead of a shrug.
+toml = "0.9"
+
+# `tdcc-plugin` is NOT published on crates.io under this name — it was renamed
+# from `mesh-llm-plugin` and the `tdcc-mesh` repository that holds it is private
+# — so `tdcc-plugin = "0.72.1"` does not resolve. This path assumes `tdcc-mesh`
+# and `tdcc-plugins` are checked out as siblings. See "Building against the SDK"
+# in README.md for what a public consumer replaces this with.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+[dev-dependencies]
+# The delivery and completion paths are proved against real sockets on loopback
+# rather than against a mock, so "did it actually POST?" has an answer.
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread"] }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
