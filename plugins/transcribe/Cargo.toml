@@ -1,0 +1,34 @@
+[package]
+name = "transcribe"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
+
+# `multipart` because that is the wire format every Whisper-compatible
+# transcription endpoint speaks; `rustls-tls` rather than the platform TLS stack
+# so a contributor building this on their own machine needs no OpenSSL headers.
+# `reqwest::Url` is re-exported `url::Url`, so there is no separate `url`
+# dependency and no chance of two incompatible `Url` types.
+reqwest = { version = "0.12", default-features = false, features = [
+    "http2",
+    "multipart",
+    "rustls-tls",
+] }
+
+# `tdcc-plugin` is NOT published on crates.io under this name — it was renamed
+# from `mesh-llm-plugin` and its repository is private — so `tdcc-plugin = "…"`
+# does not resolve. Point at a local `tdcc-mesh` checkout instead. See
+# README.md > "Building against the SDK" for what to change once the SDK is
+# published.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
