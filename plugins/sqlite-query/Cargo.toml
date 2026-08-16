@@ -1,0 +1,29 @@
+[package]
+name = "sqlite-query"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# `bundled` statically links SQLite, so the plugin does not depend on whatever
+# libsqlite3 happens to be installed on a contributor's machine.
+# `hooks` provides `Connection::authorizer`, which is how ATTACH and every
+# mutating action are refused at statement-compile time (see `src/policy.rs`).
+# `column_decltype` provides `Statement::columns()`, which is how a result set
+# reports its declared column types back to the model.
+rusqlite = { version = "0.37", features = ["bundled", "hooks", "column_decltype"] }
+
+# The SDK is not published to crates.io under this name yet, so this points at
+# a local checkout of the tdcc repository. See "Building against the SDK" in
+# README.md for what a public consumer changes once it is published.
+tdcc-plugin = { path = "../../../tdcc-mesh/crates/tdcc-plugin" }
+
+# Standalone crate: this plugin is not a member of any surrounding workspace.
+[workspace]
